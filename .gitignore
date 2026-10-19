@@ -3,5 +3,7 @@ Thumbs.db
 desktop.ini
 *.log
 
-# internal planning notes, keep local only
+# internal notes, keep local only (repo is public)
 HANDOFF.md
+DEPLOY-HANDOFF.md
+compliance/
