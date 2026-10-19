@@ -1,5 +1,50 @@
 # Handoff: deploy mitori.mn to the production server
 
+> **Status: done.** Deployed and verified on 2026-10-19. Keep this file as the runbook for redeploys and server changes.
+
+## As deployed (2026-10-19) — use this, not the plan in "Steps"
+
+The deploy follows the server's hosting rules (Lendyx `docs/reference/architecture/SERVER_HOSTING.md`, tenant **T13**) and mirrors ozzeel.mn. So it differs from the original plan further down: no `/var/www`, no root-owned clone, no certbot-edited vhost.
+
+| Item | Value |
+| --- | --- |
+| Unix user | `mitori-prod` (system user, no login, no sudo). It owns everything under `/srv/mitori/prod`. |
+| Web root | `/srv/mitori/prod/code`, a clone of `https://github.com/fastroc/mitori.git` (`main`) served as-is. The repo is **public**: the server pulls over HTTPS with no key. |
+| Other folders | `/srv/mitori/prod/{data,config,logs,backups}` (750). They are empty except `logs/DEPLOY_LOG` (one line per deploy). |
+| nginx | `/etc/nginx/sites-available/mitori.mn`, written by hand and symlinked from `sites-enabled/mitori.mn`. It contains `http://` → `https://mitori.mn`, `www` → apex, dotfiles and `*.md` → 403, `404.html`, gzip, and `Cache-Control: no-cache` everywhere except `/assets/fonts/` (`immutable`). Logs: `/var/log/nginx/mitori.{access,error}.log`. |
+| Security headers | `/etc/nginx/snippets/mitori-security-headers.conf`, mitori's own copy of the same 5 headers ozzeel sends. |
+| TLS | `certbot certonly --nginx -d mitori.mn -d www.mitori.mn`. certbot does **not** edit the vhost. ECDSA cert, first issue expires **2027-01-17 03:47:44 UTC**. Renews via `certbot.timer` (twice a day). `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` reloads nginx after renewal. `certbot renew --cert-name mitori.mn --dry-run` succeeded on 2026-10-19. |
+| Backup of the box before the change | `/var/backups/mitori-deploy-2026-10-19/` (root 700): `etc-nginx.tgz`, `etc-letsencrypt.tgz`, `mitori.mn.http-only`. |
+| Not changed | ozzeel.mn and every other tenant. Their 19 URLs were checked before and after, and returned identical status codes. DNS, email and Datacom were not touched. |
+
+**Update the site** (content changes need no nginx reload):
+
+```
+ssh server@202.131.237.167
+sudo -u mitori-prod env HOME=/tmp git -C /srv/mitori/prod/code pull --ff-only
+echo "$(date -u +%FT%TZ)|$USER|pull $(sudo -u mitori-prod env HOME=/tmp git -C /srv/mitori/prod/code rev-parse --short HEAD)|OK" | sudo -u mitori-prod tee -a /srv/mitori/prod/logs/DEPLOY_LOG
+```
+
+Don't use `sudo git pull` as root: git refuses a repo owned by another user ("dubious ownership").
+
+**Change the nginx config:**
+1. Back up the file.
+2. Edit `/etc/nginx/sites-available/mitori.mn`.
+3. `sudo nginx -t && sudo systemctl reload nginx` (reload, never restart).
+4. Re-run the step 4 checks below, plus `curl -sI https://ozzeel.mn | head -1`.
+
+**Roll back / remove:**
+1. `sudo rm /etc/nginx/sites-enabled/mitori.mn && sudo nginx -t && sudo systemctl reload nginx`
+2. `sudo certbot delete --cert-name mitori.mn`
+3. `sudo rm -r /srv/mitori`
+4. `sudo userdel mitori-prod`
+
+Step 1 alone takes the site down without touching anything else.
+
+> **Known box-wide gap (not mitori's):** the server has no `default_server` yet (SERVER_HOSTING R-1). A name that points here *without* its own vhost shows academia.mn. mitori.mn has its own vhost, so it is not affected.
+
+The sections below are the **original plan** from before the deploy, kept for history.
+
 Written 2026-10-19 for the Claude session that works on our server (the same session/setup that deployed ozzeel.mn). Bataa is the decision maker; ask him before anything that could affect ozzeel.mn.
 
 ## What this is
